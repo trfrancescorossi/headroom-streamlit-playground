@@ -35,14 +35,9 @@ def build_sample_payload() -> str:
             )
         rows.append(row)
 
-    return json.dumps(
-        {
-            "environment": "production",
-            "generated_for": "Headroom Streamlit demo",
-            "results": rows,
-        },
-        indent=2,
-    )
+    # SmartCrusher is designed around top-level JSON arrays, the most common
+    # shape for large tool results, logs and database query outputs.
+    return json.dumps(rows, indent=2)
 
 
 def content_as_text(content: Any) -> str:
