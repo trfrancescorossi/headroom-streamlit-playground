@@ -8,6 +8,7 @@ import streamlit as st
 os.environ.setdefault("HEADROOM_BEACON", "off")
 
 from headroom import compress  # noqa: E402
+from headroom.transforms.smart_crusher import SmartCrusher, SmartCrusherConfig  # noqa: E402
 
 
 def build_sample_payload() -> str:
@@ -44,6 +45,20 @@ def content_as_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False, indent=2)
+
+
+def count_tokens(text: str, model: str) -> int:
+    """Count model tokens when available, with a deterministic fallback."""
+    try:
+        import tiktoken
+
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            encoding = tiktoken.get_encoding("o200k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        return max(1, round(len(text) / 4))
 
 
 st.set_page_config(
@@ -115,23 +130,52 @@ if st.button("Compress with Headroom", type="primary", disabled=not payload.stri
 
     try:
         with st.spinner("Compressing locally…"):
-            compressed = compress(
-                messages,
-                model=model,
-                compress_user_messages=True,
-                protect_recent=0,
-                target_ratio=target_ratio,
-                min_tokens_to_compress=min_tokens,
-                kompress_model="disabled",
-            )
+            try:
+                parsed_payload = json.loads(payload)
+            except json.JSONDecodeError:
+                parsed_payload = None
+
+            if isinstance(parsed_payload, list):
+                crusher = SmartCrusher(
+                    SmartCrusherConfig(min_tokens_to_crush=min_tokens),
+                    with_compaction=True,
+                )
+                crushed = crusher.crush(
+                    payload,
+                    query="Preserve errors, warnings, anomalies and useful context.",
+                )
+                compressed_text = crushed.compressed
+                tokens_before = count_tokens(payload, model)
+                tokens_after = count_tokens(compressed_text, model)
+                transforms = [f"smart_crusher:{crushed.strategy}"]
+                output_language = "text"
+            else:
+                compressed = compress(
+                    messages,
+                    model=model,
+                    compress_user_messages=True,
+                    protect_recent=0,
+                    target_ratio=target_ratio,
+                    min_tokens_to_compress=min_tokens,
+                    kompress_model="disabled",
+                )
+                compressed_text = content_as_text(compressed.messages[-1]["content"])
+                tokens_before = compressed.tokens_before
+                tokens_after = compressed.tokens_after
+                transforms = compressed.transforms_applied
+                output_language = "json"
+
+            tokens_saved = max(0, tokens_before - tokens_after)
+            reduction = tokens_saved / tokens_before if tokens_before else 0.0
 
         st.session_state.compression_result = {
-            "compressed": content_as_text(compressed.messages[-1]["content"]),
-            "tokens_before": compressed.tokens_before,
-            "tokens_after": compressed.tokens_after,
-            "tokens_saved": compressed.tokens_saved,
-            "ratio": compressed.compression_ratio,
-            "transforms": compressed.transforms_applied,
+            "compressed": compressed_text,
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_after,
+            "tokens_saved": tokens_saved,
+            "ratio": reduction,
+            "transforms": transforms,
+            "output_language": output_language,
             "original": payload,
         }
     except Exception as exc:  # Streamlit should surface packaging/runtime issues clearly.
@@ -150,7 +194,11 @@ if result:
         ["Compressed", "Original", "Python integration"]
     )
     with compressed_tab:
-        st.code(result["compressed"], language="json", wrap_lines=True)
+        st.code(
+            result["compressed"],
+            language=result["output_language"],
+            wrap_lines=True,
+        )
         st.download_button(
             "Download compressed output",
             data=result["compressed"],
