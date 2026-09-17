@@ -112,10 +112,10 @@ payload = st.text_area(
 if st.button("Compress with Headroom", type="primary", disabled=not payload.strip()):
     messages = [
         {
-            "role": "user",
-            "content": "Inspect this tool output and preserve errors, anomalies and useful context.",
+            "role": "system",
+            "content": "Preserve errors, anomalies and useful context while compressing.",
         },
-        {"role": "tool", "content": payload},
+        {"role": "user", "content": payload},
     ]
 
     try:
@@ -123,6 +123,7 @@ if st.button("Compress with Headroom", type="primary", disabled=not payload.stri
             compressed = compress(
                 messages,
                 model=model,
+                compress_user_messages=True,
                 protect_recent=0,
                 target_ratio=target_ratio,
                 min_tokens_to_compress=min_tokens,
@@ -177,6 +178,7 @@ messages = [
 result = compress(
     messages,
     model="gpt-4o",
+    compress_user_messages=True,
     protect_recent=0,
     kompress_model="disabled",
 )
@@ -193,4 +195,3 @@ with st.expander("What this demo is showing"):
         "and boundaries. Savings vary by content: repetitive JSON and logs usually "
         "compress much more than short or already-dense prose."
     )
-
